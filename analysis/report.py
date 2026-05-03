@@ -1,0 +1,173 @@
+"""
+Terminal report generation using Rich.
+Produces four sections:
+  1. Holdings table (by broker/account)
+  2. Sector allocation
+  3. Geography allocation
+  4. Performance vs S&P 500 benchmark
+"""
+
+from collections import defaultdict
+from rich.console import Console
+from rich.table import Table
+from rich import box
+from rich.text import Text
+from brokerage.base import Holding
+
+console = Console()
+
+
+def _fmt_val(v: float | None, fmt: str = ",.0f", prefix: str = "$") -> str:
+    if v is None:
+        return "—"
+    return f"{prefix}{v:{fmt}}"
+
+
+def _fmt_pct(v: float | None) -> Text:
+    if v is None:
+        return Text("—", style="dim")
+    color = "green" if v >= 0 else "red"
+    sign = "+" if v >= 0 else ""
+    return Text(f"{sign}{v:.1f}%", style=color)
+
+
+def _bar(pct: float, width: int = 20) -> str:
+    filled = round(pct / 100 * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _holdings_table(holdings: list[Holding]) -> None:
+    table = Table(
+        title="Holdings",
+        box=box.ROUNDED,
+        show_lines=False,
+        header_style="bold cyan",
+    )
+    table.add_column("Symbol", style="bold white", width=10)
+    table.add_column("Name", width=28)
+    table.add_column("Broker / Account", width=20)
+    table.add_column("Sector", width=20)
+    table.add_column("Country", width=15)
+    table.add_column("Qty", justify="right", width=10)
+    table.add_column("Price", justify="right", width=10)
+    table.add_column("Value", justify="right", width=12)
+    table.add_column("G/L%", justify="right", width=8)
+    table.add_column("1Y Perf", justify="right", width=9)
+
+    total_value = sum(h.market_value for h in holdings)
+
+    for h in sorted(holdings, key=lambda x: -x.market_value):
+        acct_label = f"{h.broker} {h.account_id[-4:]}"
+        table.add_row(
+            h.symbol,
+            h.name[:28],
+            acct_label,
+            h.sector or "—",
+            h.country or "—",
+            f"{h.quantity:,.2f}",
+            _fmt_val(h.price, fmt=",.2f"),
+            _fmt_val(h.market_value),
+            _fmt_pct(h.gain_loss_pct),
+            _fmt_pct(h.perf_1y),
+        )
+
+    console.print(table)
+    console.print(f"  [bold]Total portfolio value:[/bold]  [green]{_fmt_val(total_value)}[/green]\n")
+
+
+def _allocation_table(holdings: list[Holding], group_key: str, title: str) -> None:
+    totals: dict[str, float] = defaultdict(float)
+    grand_total = 0.0
+    for h in holdings:
+        key = getattr(h, group_key) or "Unknown"
+        totals[key] += h.market_value
+        grand_total += h.market_value
+
+    table = Table(title=title, box=box.SIMPLE, header_style="bold cyan")
+    table.add_column(title.split()[0], width=30)
+    table.add_column("Value", justify="right", width=14)
+    table.add_column("Weight", justify="right", width=8)
+    table.add_column("", width=22)
+
+    for key, val in sorted(totals.items(), key=lambda x: -x[1]):
+        pct = val / grand_total * 100 if grand_total else 0
+        table.add_row(key, _fmt_val(val), f"{pct:.1f}%", _bar(pct))
+
+    console.print(table)
+
+
+def _performance_table(holdings: list[Holding]) -> None:
+    table = Table(title="Performance Summary", box=box.ROUNDED, header_style="bold cyan")
+    table.add_column("Symbol", style="bold white", width=10)
+    table.add_column("Name", width=28)
+    table.add_column("1M", justify="right", width=8)
+    table.add_column("3M", justify="right", width=8)
+    table.add_column("YTD", justify="right", width=8)
+    table.add_column("1Y", justify="right", width=8)
+    table.add_column("Cost Basis", justify="right", width=12)
+    table.add_column("G/L $", justify="right", width=12)
+    table.add_column("G/L %", justify="right", width=8)
+
+    for h in sorted(holdings, key=lambda x: -x.market_value):
+        gl = h.gain_loss
+        gl_str = Text("—")
+        if gl is not None:
+            color = "green" if gl >= 0 else "red"
+            sign = "+" if gl >= 0 else ""
+            gl_str = Text(f"{sign}${gl:,.0f}", style=color)
+
+        table.add_row(
+            h.symbol,
+            h.name[:28],
+            _fmt_pct(h.perf_1m),
+            _fmt_pct(h.perf_3m),
+            _fmt_pct(h.perf_ytd),
+            _fmt_pct(h.perf_1y),
+            _fmt_val(h.cost_basis) if h.cost_basis else "—",
+            gl_str,
+            _fmt_pct(h.gain_loss_pct),
+        )
+
+    console.print(table)
+
+
+def _weighted_perf(holdings: list[Holding], attr: str) -> float | None:
+    total_val = sum(h.market_value for h in holdings if getattr(h, attr) is not None)
+    if total_val == 0:
+        return None
+    return sum(
+        h.market_value / total_val * getattr(h, attr)
+        for h in holdings
+        if getattr(h, attr) is not None
+    )
+
+
+def print_report(holdings: list[Holding]) -> None:
+    console.rule("[bold cyan]Portfolio Analysis[/bold cyan]")
+    console.print()
+
+    _holdings_table(holdings)
+    _allocation_table(holdings, "sector", "Sector Allocation")
+    console.print()
+    _allocation_table(holdings, "country", "Geography Allocation")
+    console.print()
+    _performance_table(holdings)
+
+    console.print()
+    console.rule("[bold cyan]Portfolio-Level Performance (value-weighted)[/bold cyan]")
+    perf_table = Table(box=box.SIMPLE, header_style="bold cyan", show_header=True)
+    perf_table.add_column("", width=30)
+    perf_table.add_column("1M", justify="right", width=8)
+    perf_table.add_column("3M", justify="right", width=8)
+    perf_table.add_column("YTD", justify="right", width=8)
+    perf_table.add_column("1Y", justify="right", width=8)
+
+    perf_table.add_row(
+        "Your Portfolio",
+        _fmt_pct(_weighted_perf(holdings, "perf_1m")),
+        _fmt_pct(_weighted_perf(holdings, "perf_3m")),
+        _fmt_pct(_weighted_perf(holdings, "perf_ytd")),
+        _fmt_pct(_weighted_perf(holdings, "perf_1y")),
+    )
+    console.print(perf_table)
+    console.print()
