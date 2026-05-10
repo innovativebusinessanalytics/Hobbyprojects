@@ -77,14 +77,27 @@ class FidelityCSVClient(BrokerClient):
             account_id = _s(row.get("Account Number") or row.get("Account Name/Number")) or "unknown"
             desc = _s(row.get("Description")) or symbol
             asset_type = _s(row.get("Type")).upper()
-            if asset_type in ("MUTUAL FUND", "MUTUAL FUNDS"):
+            if any(k in asset_type for k in ("MUTUAL FUND", "MUTUAL FUNDS")):
                 asset_type = "FUND"
-            elif asset_type in ("BOND", "BONDS", "FIXED INCOME"):
+            elif any(k in asset_type for k in ("BOND", "FIXED INCOME", "TREASURY", "CD", "CERTIFICATE")):
                 asset_type = "BOND"
-            elif asset_type in ("CASH", "MONEY MARKET"):
+            elif any(k in asset_type for k in ("CASH", "MONEY MARKET", "CORE", "MMKT")):
                 asset_type = "CASH"
+            elif any(k in asset_type for k in ("OPTION",)):
+                asset_type = "OPTION"
+            elif any(k in asset_type for k in ("ETF",)):
+                asset_type = "EQUITY"
             else:
                 asset_type = "EQUITY"
+
+            # Catch money-market funds missed by Type — check description
+            desc_up = desc.upper()
+            if asset_type not in ("CASH", "BOND") and any(
+                k in desc_up for k in ("MONEY MARKET", "CASH RESERVES", "GOVERNMENT MM",
+                                        "TREASURY MM", "MUNICIPAL MM", "PRIME MM",
+                                        "CASH MGMT", "SWEEP")
+            ):
+                asset_type = "CASH"
 
             holdings.append(Holding(
                 symbol=symbol,

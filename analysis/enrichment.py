@@ -11,7 +11,16 @@ from brokerage.base import Holding
 
 log = logging.getLogger(__name__)
 
-CASH_LIKE = {"SPAXX", "FDRXX", "FCASH", "MMDA1", "SWVXX", "SNSXX"}
+# Common money-market / cash symbols at Fidelity and Schwab
+CASH_LIKE = {
+    # Fidelity
+    "SPAXX", "FDRXX", "FCASH", "FZFXX", "FMPXX", "FZDXX", "SPRXX",
+    "FTEXX", "FRBXX", "FZAXX", "FDLXX", "FTOXX", "FCOXX", "FISXX",
+    # Schwab
+    "SWVXX", "SNSXX", "SNVXX", "SWRXX", "MMDA1", "MMDA2",
+    # Generic
+    "CASH", "FCASH",
+}
 _PERIODS = {"1mo": "perf_1m", "3mo": "perf_3m", "ytd": "perf_ytd", "1y": "perf_1y"}
 
 # Options look like "NVDA  280121C00200000" — long strings with spaces/digits
@@ -34,9 +43,21 @@ def _pct(series) -> float | None:
     return round((l / f - 1) * 100, 2) if f else None
 
 
+_CASH_NAME_KEYWORDS = ("money market", "cash reserves", "government mm", "treasury mm",
+                       "municipal mm", "prime mm", "cash mgmt", "sweep", "treasury fund")
+
+
+def _is_cash_fund(info: dict) -> bool:
+    name = (info.get("longName") or info.get("shortName") or "").lower()
+    cat = (info.get("category") or "").lower()
+    return any(k in name or k in cat for k in _CASH_NAME_KEYWORDS)
+
+
 def _infer_sector(info: dict) -> str:
     qt = info.get("quoteType", "").upper()
     cat = info.get("category", "").upper()
+    if _is_cash_fund(info):
+        return "Cash & Equivalents"
     if "BOND" in qt or "FIXED" in cat or "BOND" in cat:
         return "Fixed Income"
     if "ETF" in qt or "MUTUALFUND" in qt:
@@ -45,8 +66,9 @@ def _infer_sector(info: dict) -> str:
 
 
 def _enrich_one(h: Holding) -> Holding:
-    if h.asset_type == "CASH" or h.symbol in CASH_LIKE:
-        h.sector, h.country = "Cash & Equivalents", "N/A"
+    if h.asset_type in ("CASH", "OPTION") or h.symbol in CASH_LIKE:
+        h.sector = "Cash & Equivalents" if h.asset_type != "OPTION" else "Options"
+        h.country = "N/A"
         return h
 
     if _is_option(h.symbol):
