@@ -31,8 +31,13 @@ OFX_HEADERS = (
 
 # ── CSV import ────────────────────────────────────────────────────────────────
 
-def _parse_float(s: str) -> float:
-    return float(s.replace("$", "").replace(",", "").strip() or "0")
+def _s(val) -> str:
+    """Safe strip — handles None values from short CSV rows."""
+    return (val or "").strip()
+
+
+def _parse_float(s) -> float:
+    return float(_s(s).replace("$", "").replace(",", "") or "0")
 
 
 class FidelityCSVClient(BrokerClient):
@@ -44,8 +49,6 @@ class FidelityCSVClient(BrokerClient):
     def get_holdings(self) -> list[Holding]:
         holdings = []
         with self.csv_path.open(newline="", encoding="utf-8-sig") as f:
-            # Fidelity CSV has junk header rows before the actual data; skip until
-            # we find the header row containing "Symbol"
             lines = f.readlines()
 
         header_idx = next(
@@ -56,24 +59,24 @@ class FidelityCSVClient(BrokerClient):
 
         reader = csv.DictReader(lines[header_idx:])
         for row in reader:
-            symbol = row.get("Symbol", "").strip()
-            if not symbol or symbol.startswith("Pending") or symbol == "":
+            symbol = _s(row.get("Symbol"))
+            # Skip blank, summary, and footer rows Fidelity appends to the CSV
+            if not symbol or symbol.lower() in ("account total", "--", "pending activity"):
                 continue
-            # Skip cash / money-market summary rows
-            if symbol.lower() in ("", "account total", "--"):
+            if symbol.startswith("Pending"):
                 continue
 
             try:
-                quantity = _parse_float(row.get("Quantity", "0"))
-                price = _parse_float(row.get("Last Price", "0"))
-                market_value = _parse_float(row.get("Current Value", "0"))
-                cost_basis = _parse_float(row.get("Cost Basis Total", "") or "0") or None
+                quantity = _parse_float(row.get("Quantity"))
+                price = _parse_float(row.get("Last Price"))
+                market_value = _parse_float(row.get("Current Value"))
+                cost_basis = _parse_float(row.get("Cost Basis Total")) or None
             except ValueError:
                 continue
 
-            account_id = row.get("Account Number", row.get("Account Name/Number", "unknown")).strip()
-            desc = row.get("Description", symbol).strip()
-            asset_type = row.get("Type", "EQUITY").strip().upper()
+            account_id = _s(row.get("Account Number") or row.get("Account Name/Number")) or "unknown"
+            desc = _s(row.get("Description")) or symbol
+            asset_type = _s(row.get("Type")).upper()
             if asset_type in ("MUTUAL FUND", "MUTUAL FUNDS"):
                 asset_type = "FUND"
             elif asset_type in ("BOND", "BONDS", "FIXED INCOME"):
