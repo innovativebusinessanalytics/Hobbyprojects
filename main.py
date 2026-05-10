@@ -67,19 +67,28 @@ def fetch_fidelity():
     ).get_holdings()
 
 
+def fetch_fidelity_csv(path: str):
+    from brokerage.fidelity import FidelityCSVClient
+    return FidelityCSVClient(csv_path=path).get_holdings()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Portfolio analyzer")
-    parser.add_argument("--schwab", action="store_true", help="Fetch Schwab holdings only")
-    parser.add_argument("--fidelity", action="store_true", help="Fetch Fidelity holdings only")
+    parser.add_argument("--schwab", action="store_true", help="Fetch Schwab holdings")
+    parser.add_argument("--fidelity", action="store_true", help="Fetch Fidelity via OFX")
+    parser.add_argument("--fidelity-csv", metavar="FILE", help="Load Fidelity holdings from exported CSV")
     parser.add_argument("--no-enrich", action="store_true", help="Skip yfinance enrichment")
     args = parser.parse_args()
-    fetch_both = not args.schwab and not args.fidelity
+    fetch_both = not args.schwab and not args.fidelity and not args.fidelity_csv
+
+    fidelity_fn = (lambda: fetch_fidelity_csv(args.fidelity_csv)) if args.fidelity_csv else fetch_fidelity
+    fidelity_flag = bool(args.fidelity or args.fidelity_csv or fetch_both)
 
     log.info("=== Run started ===")
     all_holdings = []
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), transient=True) as progress:
         for name, fn, flag in [("Schwab", fetch_schwab, args.schwab or fetch_both),
-                               ("Fidelity", fetch_fidelity, args.fidelity or fetch_both)]:
+                               ("Fidelity", fidelity_fn, fidelity_flag)]:
             if not flag:
                 continue
             t = progress.add_task(f"Fetching {name}...")
