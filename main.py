@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Portfolio analyzer: pulls live holdings from Fidelity,
+Portfolio analyzer: pulls live holdings from Schwab and/or Fidelity,
 enriches them with sector/geography/performance data, and prints a report.
 
 Usage:
   cp .env.example .env       # fill in your credentials
   pip install -r requirements.txt
-  python main.py             # fetch holdings
+  python main.py             # fetches both brokers
+  python main.py --schwab    # Schwab only
+  python main.py --fidelity  # Fidelity only
   python main.py --no-enrich # skip yfinance enrichment
 """
 
@@ -30,6 +32,17 @@ def _require_env(*names):
     return {n: os.environ[n] for n in names}
 
 
+def fetch_schwab():
+    from brokerage.schwab import SchwabClient
+    env = _require_env("SCHWAB_APP_KEY", "SCHWAB_APP_SECRET")
+    return SchwabClient(
+        app_key=env["SCHWAB_APP_KEY"],
+        app_secret=env["SCHWAB_APP_SECRET"],
+        callback_url=os.getenv("SCHWAB_CALLBACK_URL", "https://127.0.0.1:8182"),
+        token_path=os.getenv("SCHWAB_TOKEN_FILE", "schwab_token.json"),
+    ).get_holdings()
+
+
 def fetch_fidelity():
     from brokerage.fidelity import FidelityClient
     env = _require_env("FIDELITY_USERNAME", "FIDELITY_PASSWORD", "FIDELITY_ACCOUNT_IDS")
@@ -43,20 +56,26 @@ def fetch_fidelity():
 
 def main():
     parser = argparse.ArgumentParser(description="Portfolio analyzer")
+    parser.add_argument("--schwab", action="store_true", help="Fetch Schwab holdings only")
+    parser.add_argument("--fidelity", action="store_true", help="Fetch Fidelity holdings only")
     parser.add_argument("--no-enrich", action="store_true", help="Skip yfinance enrichment")
     args = parser.parse_args()
+    fetch_both = not args.schwab and not args.fidelity
 
     all_holdings = []
-
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), transient=True) as progress:
-        t = progress.add_task("Fetching Fidelity holdings...")
-        try:
-            holdings = fetch_fidelity()
-            all_holdings.extend(holdings)
-            progress.update(t, description=f"[green]Fidelity: {len(holdings)} positions[/green]")
-        except Exception as e:
-            console.print(f"[yellow]Fidelity fetch failed:[/yellow] {e}")
-        progress.remove_task(t)
+        for name, fn, flag in [("Schwab", fetch_schwab, args.schwab or fetch_both),
+                               ("Fidelity", fetch_fidelity, args.fidelity or fetch_both)]:
+            if not flag:
+                continue
+            t = progress.add_task(f"Fetching {name}...")
+            try:
+                h = fn()
+                all_holdings.extend(h)
+                progress.update(t, description=f"[green]{name}: {len(h)} positions[/green]")
+            except Exception as e:
+                console.print(f"[yellow]{name} failed:[/yellow] {e}")
+            progress.remove_task(t)
 
         if not all_holdings:
             console.print("[red]No holdings fetched. Check your credentials and account IDs.[/red]")
