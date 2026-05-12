@@ -2,9 +2,10 @@
 Terminal report generation using Rich.
 Produces four sections:
   1. Holdings table (by broker/account)
-  2. Sector allocation
-  3. Geography allocation
-  4. Performance vs S&P 500 benchmark
+  2. Sector allocation vs S&P 500
+  3. Equity region breakdown
+  4. Geography allocation
+  5. Performance summary
 """
 
 from collections import defaultdict
@@ -16,6 +17,21 @@ from brokerage.base import Holding
 from analysis.regions import REGION_ORDER, SUB_REGION_ORDER
 
 console = Console()
+
+# Approximate S&P 500 GICS sector weights (updated periodically)
+SP500_SECTOR_WEIGHTS: dict[str, float] = {
+    "Basic Materials": 1.90,
+    "Communication Services": 10.48,
+    "Consumer Cyclical": 10.00,
+    "Consumer Defensive": 5.25,
+    "Energy": 4.01,
+    "Financial Services": 12.34,
+    "Healthcare": 9.47,
+    "Industrials": 8.47,
+    "Real Estate": 1.95,
+    "Technology": 33.57,
+    "Utilities": 2.54,
+}
 
 
 def _fmt_val(v: float | None, fmt: str = ",.0f", prefix: str = "$") -> str:
@@ -95,6 +111,62 @@ def _allocation_table(holdings: list[Holding], group_key: str, title: str) -> No
         table.add_row(key, _fmt_val(val), f"{pct:.1f}%", _bar(pct))
 
     console.print(table)
+
+
+def _dual_bar(port_pct: float, sp_pct: float, width: int = 18) -> Text:
+    """Two stacked colored bars: magenta for portfolio, green for S&P 500."""
+    max_pct = 40.0  # scale so 40% fills the bar
+    p_fill = min(round(port_pct / max_pct * width), width)
+    s_fill = min(round(sp_pct / max_pct * width), width)
+    t = Text()
+    t.append("█" * p_fill + "░" * (width - p_fill), style="magenta")
+    t.append(" ")
+    t.append("█" * s_fill + "░" * (width - s_fill), style="green")
+    return t
+
+
+def _equity_sector_table(holdings: list[Holding]) -> None:
+    """Sector breakdown vs S&P 500 benchmark with dual bar chart."""
+    equity = [
+        h for h in holdings
+        if h.asset_type not in ("CASH", "BOND", "OPTION")
+        and h.sector not in ("Cash & Equivalents", "Fixed Income", "Options", "Diversified", None)
+    ]
+    total = sum(h.market_value for h in equity)
+    if not total:
+        return
+
+    by_sector: dict[str, float] = defaultdict(float)
+    for h in equity:
+        by_sector[h.sector] += h.market_value
+
+    # Union of portfolio sectors and S&P sectors, sorted alphabetically
+    all_sectors = sorted(set(by_sector) | set(SP500_SECTOR_WEIGHTS))
+
+    table = Table(
+        title="Equity Sector vs S&P 500",
+        box=box.SIMPLE,
+        header_style="bold cyan",
+        show_header=True,
+    )
+    table.add_column("Sector", width=24)
+    table.add_column("Portfolio", justify="right", width=10)
+    table.add_column("S&P 500", justify="right", width=10)
+    table.add_column("[magenta]Portfolio[/magenta]  [green]S&P 500[/green]", width=40, no_wrap=True)
+
+    for sector in all_sectors:
+        port_pct = by_sector.get(sector, 0.0) / total * 100
+        sp_pct = SP500_SECTOR_WEIGHTS.get(sector, 0.0)
+
+        port_str = Text(f"{port_pct:.2f}%", style="magenta" if port_pct else "dim")
+        sp_str = Text(f"{sp_pct:.2f}%" if sp_pct else "—", style="green" if sp_pct else "dim")
+
+        table.add_row(sector, port_str, sp_str, _dual_bar(port_pct, sp_pct))
+
+    console.print(table)
+    console.print(
+        "  [dim]S&P 500 weights are approximate and updated periodically.[/dim]\n"
+    )
 
 
 def _performance_table(holdings: list[Holding]) -> None:
@@ -193,8 +265,7 @@ def print_report(holdings: list[Holding]) -> None:
     console.print()
 
     _holdings_table(holdings)
-    _allocation_table(holdings, "sector", "Sector Allocation")
-    console.print()
+    _equity_sector_table(holdings)
     _equity_region_table(holdings)
     console.print()
     _allocation_table(holdings, "country", "Geography Allocation")
