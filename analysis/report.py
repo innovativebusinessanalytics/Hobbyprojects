@@ -255,7 +255,7 @@ def _equity_region_table(holdings: list[Holding]) -> None:
             if not sv:
                 continue
             spct = sv / total * 100
-            table.add_row(f"  {sub}", f"{spct:.2f}%", _bar(spct, w=14))
+            table.add_row(f"  {sub}", f"{spct:.2f}%", _bar(spct, 14))
 
     console.print(table)
 
