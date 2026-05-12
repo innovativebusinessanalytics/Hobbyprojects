@@ -13,6 +13,7 @@ from rich.table import Table
 from rich import box
 from rich.text import Text
 from brokerage.base import Holding
+from analysis.regions import REGION_ORDER, SUB_REGION_ORDER
 
 console = Console()
 
@@ -142,12 +143,59 @@ def _weighted_perf(holdings: list[Holding], attr: str) -> float | None:
     )
 
 
+def _equity_region_table(holdings: list[Holding]) -> None:
+    """Hierarchical equity region breakdown (US / Developed / Emerging / Other)."""
+    equity = [h for h in holdings if h.asset_type not in ("CASH", "BOND", "OPTION")
+              and h.sector not in ("Cash & Equivalents", "Fixed Income")]
+    total = sum(h.market_value for h in equity)
+    if not total:
+        return
+
+    # Accumulate value by (region, sub_region)
+    by_sub: dict[tuple[str, str], float] = defaultdict(float)
+    for h in equity:
+        r = h.region or "Other"
+        sr = h.sub_region or "Other"
+        by_sub[(r, sr)] += h.market_value
+
+    by_region: dict[str, float] = defaultdict(float)
+    for (r, _), v in by_sub.items():
+        by_region[r] += v
+
+    table = Table(title="Equity Region", box=box.SIMPLE, header_style="bold cyan", show_header=True)
+    table.add_column("Region", width=28)
+    table.add_column("Weight", justify="right", width=8)
+    table.add_column("", width=22)
+
+    for region in REGION_ORDER:
+        rv = by_region.get(region, 0)
+        if not rv:
+            continue
+        pct = rv / total * 100
+        table.add_row(
+            f"[bold]{region}[/bold]",
+            f"[bold]{pct:.2f}%[/bold]",
+            f"[bold]{_bar(pct)}[/bold]",
+        )
+        # Sub-regions
+        for sub in SUB_REGION_ORDER:
+            sv = by_sub.get((region, sub), 0)
+            if not sv:
+                continue
+            spct = sv / total * 100
+            table.add_row(f"  {sub}", f"{spct:.2f}%", _bar(spct, w=14))
+
+    console.print(table)
+
+
 def print_report(holdings: list[Holding]) -> None:
     console.rule("[bold cyan]Portfolio Analysis[/bold cyan]")
     console.print()
 
     _holdings_table(holdings)
     _allocation_table(holdings, "sector", "Sector Allocation")
+    console.print()
+    _equity_region_table(holdings)
     console.print()
     _allocation_table(holdings, "country", "Geography Allocation")
     console.print()

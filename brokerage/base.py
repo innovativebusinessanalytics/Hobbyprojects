@@ -23,6 +23,8 @@ class Holding:
     perf_3m: Optional[float] = None
     perf_ytd: Optional[float] = None
     perf_1y: Optional[float] = None
+    region: Optional[str] = None
+    sub_region: Optional[str] = None
 
     @property
     def gain_loss(self) -> Optional[float]:

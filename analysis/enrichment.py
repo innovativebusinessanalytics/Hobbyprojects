@@ -8,6 +8,7 @@ import logging
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from brokerage.base import Holding
+from analysis.regions import classify
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ def _enrich_one(h: Holding) -> Holding:
         h.sector = full_info.get("sector") or _infer_sector(full_info)
         h.industry = full_info.get("industry")
         h.country = full_info.get("country", "United States")
+        h.region, h.sub_region = classify(h.country)
 
         for period, attr in _PERIODS.items():
             try:
